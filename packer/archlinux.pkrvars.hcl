@@ -1,4 +1,4 @@
-box_name             = "arch-molecule"
+box_name             = "arch-base"
 cloud_image_url      = "https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2"
 cloud_image_checksum = "none"
 cpus                 = 2
