@@ -1,0 +1,48 @@
+#cloud-config
+# Arch Linux specific cloud-init user-data.
+#
+# The official Arch cloud image generates a systemd-networkd config that pins
+# the NIC by MAC address (MACAddress= match). Under libvirt/Vagrant the runtime
+# NIC has a different MAC → the interface is unmanaged → no network → Packer
+# SSH timeout. This user-data replaces the pinned config with a Type=ether match
+# (MAC-agnostic) so any first Ethernet interface gets DHCP.
+
+users:
+  - default
+  - name: vagrant
+    shell: /bin/bash
+    lock_passwd: false
+    sudo: ALL=(ALL) NOPASSWD:ALL
+
+ssh_pwauth: true
+chpasswd:
+  expire: false
+  list: |
+    root:vagrant
+    vagrant:vagrant
+
+write_files:
+  # Prevent cloud-init from regenerating our networkd config on reboot
+  - path: /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+    content: |
+      network: {config: disabled}
+
+  # Replace MAC-pinned networkd config with generic Type=ether match
+  - path: /etc/systemd/network/20-wired-dhcp.network
+    content: |
+      [Match]
+      Type=ether
+
+      [Network]
+      DHCP=yes
+      DNS=8.8.8.8
+      DNS=1.1.1.1
+
+  - path: /etc/sudoers.d/90-vagrant
+    permissions: '0440'
+    content: |
+      vagrant ALL=(ALL) NOPASSWD:ALL
+
+runcmd:
+  - systemctl enable sshd
+  - systemctl restart systemd-networkd

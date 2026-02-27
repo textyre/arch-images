@@ -1,0 +1,162 @@
+---
+name: "Build Arch Images"
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'   # Weekly Monday 02:00 UTC
+  workflow_dispatch:
+    inputs:
+      artifact:
+        description: 'Which artifact to build'
+        required: false
+        default: 'all'
+        type: choice
+        options: [all, docker, vagrant]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/arch-molecule
+  BOX_NAME: arch-molecule
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Docker image: arch-systemd + base-devel + git + aur_builder
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-docker:
+    name: Build Docker image
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'schedule' ||
+      inputs.artifact == 'all' ||
+      inputs.artifact == 'docker'
+    permissions:
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: docker
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.run_number }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify Docker contract
+        run: |
+          docker run --rm \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            sh -c "$(cat contracts/docker.sh)"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Vagrant box: Packer + QEMU/KVM → arch-molecule.box → GitHub Releases
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-vagrant:
+    name: Build Vagrant box
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'schedule' ||
+      inputs.artifact == 'all' ||
+      inputs.artifact == 'vagrant'
+    permissions:
+      contents: write   # required to create/upload GitHub Releases
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | \
+            sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install QEMU + libvirt
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y qemu-system-x86 qemu-utils libvirt-daemon-system
+
+      - name: Install Packer
+        uses: hashicorp/setup-packer@main
+        with:
+          version: latest
+
+      - name: Install Ansible + community.general
+        run: |
+          pip install ansible-core
+          ansible-galaxy collection install community.general
+
+      - name: Packer init (download plugins)
+        run: packer init packer/archlinux.pkr.hcl
+
+      - name: Build Vagrant box
+        run: |
+          packer build \
+            -var-file=packer/archlinux.pkrvars.hcl \
+            packer/archlinux.pkr.hcl
+        timeout-minutes: 60
+
+      - name: Verify Vagrant box contract
+        run: |
+          sudo apt-get install -y vagrant ruby-dev build-essential pkg-config libvirt-dev
+          sudo chmod a+rw /var/run/libvirt/libvirt-sock
+          vagrant plugin install vagrant-libvirt
+
+          BOX_PATH="$GITHUB_WORKSPACE/output-arch-molecule/arch-molecule.box"
+
+          # Boot the built box and run the contract script inside it
+          mkdir /tmp/contract-test && cd /tmp/contract-test
+          cat > Vagrantfile <<'EOF'
+          Vagrant.configure("2") do |config|
+            config.vm.box = "arch-molecule-test"
+            config.vm.provider :libvirt do |libvirt|
+              libvirt.memory = 1024
+              libvirt.cpus   = 1
+            end
+          end
+          EOF
+
+          vagrant box add --name arch-molecule-test "$BOX_PATH"
+          vagrant up --no-provision
+          vagrant ssh -c "$(cat $GITHUB_WORKSPACE/contracts/vagrant.sh)"
+          vagrant destroy -f
+
+      - name: Compute version (YYYYMMDD)
+        id: version
+        run: echo "version=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BOX_FILE="output-arch-molecule/arch-molecule.box"
+          VERSION="${{ steps.version.outputs.version }}"
+          VERSIONED_ASSET="arch-molecule-${VERSION}.box"
+          LATEST_ASSET="arch-molecule-latest.box"
+
+          cp "$BOX_FILE" "$VERSIONED_ASSET"
+          cp "$BOX_FILE" "$LATEST_ASSET"
+
+          # Create the rolling 'boxes' release if it doesn't exist yet
+          gh release view boxes &>/dev/null || \
+            gh release create boxes \
+              --title "Vagrant Boxes (rolling)" \
+              --notes "Rolling release — always points to the latest built boxes. Use the \`*-latest.box\` asset in Vagrantfiles."
+
+          # Upload versioned archive + overwrite the 'latest' pointer
+          gh release upload boxes "$VERSIONED_ASSET" --clobber
+          gh release upload boxes "$LATEST_ASSET" --clobber

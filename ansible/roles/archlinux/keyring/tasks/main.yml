@@ -1,0 +1,19 @@
+---
+# Initialize pacman keyring and populate official Arch Linux keys.
+# This ensures the box doesn't ship with stale or uninitialized keys —
+# which is the root cause of the generic/arch bootstrap dance in prepare.yml.
+
+- name: Initialize pacman keyring
+  ansible.builtin.command: pacman-key --init
+  changed_when: true
+
+- name: Populate Arch Linux keyring
+  ansible.builtin.command: pacman-key --populate archlinux
+  changed_when: true
+
+- name: Update archlinux-keyring to latest
+  community.general.pacman:
+    name: archlinux-keyring
+    state: latest
+    update_cache: true
+  changed_when: true
