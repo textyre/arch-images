@@ -78,7 +78,7 @@ build {
 
   # Package the provisioned qcow2 into a libvirt-compatible .box
   post-processor "vagrant" {
-    output            = "output-${var.box_name}/${var.box_name}.box"
+    output            = "${var.box_name}.box"
     provider_override = "libvirt"
   }
 }
