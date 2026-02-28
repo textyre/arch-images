@@ -1,69 +1,84 @@
 # arch-images
 
-Builds Arch Linux images for CI and development:
+Arch Linux base image with systemd for Ansible/Molecule testing.
 
-- **Docker image** (`ghcr.io/textyre/arch-molecule`) — for Molecule Docker scenarios
-- **Vagrant box** (`arch-molecule-latest.box`) — for Molecule Vagrant/KVM scenarios
+## What this image contains
 
-Both images include: Python, sudo, base-devel, git, aur_builder user, fresh pacman keyring.
+| Package | Version | Why |
+|---------|---------|-----|
+| systemd | latest (rolling) | Molecule systemd driver + service testing |
+| python | latest (rolling) | Ansible connection + modules |
+| sudo | latest (rolling) | Privilege escalation in test playbooks |
+| base-devel (gcc, make, ...) | latest (rolling) | AUR build toolchain |
+| git | latest (rolling) | AUR cloning |
+| glibc (with locale data) | latest (rolling) | Locale generation roles (en_US, ru_RU) |
 
-## Artifacts
+Non-root user `aur_builder` with passwordless `pacman` sudo is pre-created.
 
-| Artifact | Location | Updated |
-|---|---|---|
-| Docker image | `ghcr.io/textyre/arch-molecule:latest` | Weekly (Monday 02:00 UTC) |
-| Vagrant box | [GitHub Releases → `boxes`](../../releases/tag/boxes) | Weekly (Monday 02:00 UTC) |
+## Guarantees
 
-## Image Contracts
+Every image push is contract-tested. The following are always true:
 
-### Docker (`contracts/docker.sh`)
-- systemd as PID 1
-- python, sudo
-- base-devel (gcc, make, …), git
-- aur_builder system user with passwordless pacman sudo
-- glibc locale data (for `locale` role testing)
+- `/usr/lib/systemd/systemd` is executable
+- `python`, `sudo`, `gcc`, `make`, `git`, `locale-gen` are on PATH
+- `aur_builder` user exists with `/etc/sudoers.d/aur_builder`
+- `/usr/share/i18n/locales/en_US` and `ru_RU` are present
+- `/usr/share/i18n/SUPPORTED` exists
+- `/usr/lib/systemd/system/systemd-tmpfiles-setup.service` exists
 
-### Vagrant (`contracts/vagrant.sh`)
-- python3, sudo
-- base-devel, git
-- aur_builder user
-- Valid pacman keyring (no stale keys)
-- SSH accessible
+## Contract tests
 
-## Architecture
+- Docker: [`contracts/docker.sh`](contracts/docker.sh) — runs inside the built image
+- Vagrant: [`contracts/vagrant.sh`](contracts/vagrant.sh) — runs inside a booted VM via `vagrant ssh`
 
-```
-packer/archlinux.pkr.hcl          Packer HCL2 template (QEMU + Ansible + Vagrant)
-packer/archlinux.pkrvars.hcl      Arch-specific vars (cloud image URL, disk size)
-packer/cloud-init/user-data       Cloud-init: MAC-agnostic networkd for libvirt
+## Usage
 
-ansible/site.yml                  Provisioner entry playbook
-ansible/roles/common/base/        pacman upgrade + base packages (shared with ubuntu-images)
-ansible/roles/common/vagrant_user/ vagrant user + SSH key + sudo
-ansible/roles/common/cleanup/     cache clean + machine-id reset
-ansible/roles/archlinux/keyring/  pacman-key --init + --populate archlinux
-ansible/roles/archlinux/aur_tools/ base-devel, git, aur_builder user
+### In molecule.yml (Docker driver)
 
-docker/Dockerfile                 arch-systemd Docker image
-contracts/docker.sh               Docker image contract verification
-contracts/vagrant.sh              Vagrant box contract verification
+```yaml
+platforms:
+  - name: arch-instance
+    image: ghcr.io/textyre/arch-base:rolling
+    command: /usr/lib/systemd/systemd
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+    privileged: true
+    pre_build_image: true
 ```
 
-## Local Build
+### As a Vagrant box
 
-```bash
-# Docker image
-docker build -t arch-molecule docker/
-docker run --rm arch-molecule sh -c "$(cat contracts/docker.sh)"
-
-# Vagrant box (requires KVM)
-pip install ansible-core
-ansible-galaxy collection install community.general
-packer init packer/archlinux.pkr.hcl
-packer build -var-file=packer/archlinux.pkrvars.hcl packer/archlinux.pkr.hcl
+```ruby
+# Vagrantfile
+config.vm.box = "arch-base"
+config.vm.box_url = "https://github.com/textyre/arch-images/releases/download/boxes/arch-base-latest.box"
 ```
 
-## Inspiration
+### In molecule.yml (Vagrant driver)
 
-Architecture mirrors [githubixx/vagrant-boxes](https://github.com/githubixx/vagrant-boxes):
-Packer HCL2 + QEMU + Ansible provisioner, built from official Arch Linux cloud images.
+```yaml
+platforms:
+  - name: arch-vm
+    box: arch-base
+    box_url: https://github.com/textyre/arch-images/releases/download/boxes/arch-base-latest.box
+```
+
+## Not suitable for
+
+- Production deployments of any kind
+- Environments without Docker privileged mode
+- Images where a minimal footprint is required (includes base-devel, ~1 GB)
+
+## Update schedule
+
+Rebuilt every Monday at 02:00 UTC from the latest `archlinux:base` upstream.
+Rolling release — the image always reflects the current Arch package state.
+
+## Image tags
+
+| Tag | Example | Use |
+|-----|---------|-----|
+| `:latest` | `arch-base:latest` | Local development |
+| `:YYYY.MM.DD` | `arch-base:2026.02.27` | Pin to a specific weekly build |
+| `:rolling` | `arch-base:rolling` | Semantically "latest Arch rolling" |
+| `:sha-{short}` | `arch-base:sha-abc1234` | Immutable pin for rollback |
