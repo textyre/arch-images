@@ -22,6 +22,10 @@ RUN useradd -r -s /usr/bin/nologin aur_builder && \
       > /etc/sudoers.d/aur_builder && \
     chmod 0440 /etc/sudoers.d/aur_builder
 
+# Remove Go binaries from libcap that carry unfixed upstream CVEs (Go stdlib).
+# captree is a capability-tree viewer not needed for Ansible/Molecule testing.
+RUN rm -f /usr/bin/captree
+
 # Trim unnecessary systemd units so systemd starts cleanly inside Docker.
 # Keep only systemd-tmpfiles-setup.service from sysinit.target.wants.
 RUN (for i in /lib/systemd/system/sysinit.target.wants/*; do \
