@@ -1,13 +1,11 @@
 ---
-# Entry playbook for Packer Ansible provisioner.
-# Run order: upgrade → keyring → vagrant user → cleanup
-# aur_tools intentionally excluded: roles that need aur_builder install it themselves.
 - name: Provision Arch Linux image
   hosts: all
   become: true
   gather_facts: true
   roles:
-    - common/base
+    - archlinux/mirrors
     - archlinux/keyring
+    - common/base
     - common/vagrant_user
     - common/cleanup
