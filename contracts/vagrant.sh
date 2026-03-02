@@ -10,4 +10,5 @@ echo -n "sudo:     " && sudo --version | head -1
 echo -n "systemd:  " && systemctl is-system-running 2>/dev/null || true
 echo -n "SSH:      " && systemctl is-active sshd 2>/dev/null || echo "unknown"
 echo -n "keyring:  " && pacman-key --list-sigs 2>/dev/null | head -1 && echo "OK"
+echo -n "mirror:   " && grep -c 'geo.mirror.pkgbuild.com' /etc/pacman.d/mirrorlist && echo "OK"
 echo "=== Contract: PASS ==="

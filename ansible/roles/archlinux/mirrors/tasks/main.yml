@@ -1,0 +1,20 @@
+---
+# Set geo.mirror.pkgbuild.com as the sole pacman mirror.
+# This is Arch's official CDN-backed geo-redirect — always in sync,
+# no partial-sync 404s that plague individual mirrors.
+
+- name: Set geo.mirror.pkgbuild.com as sole mirror
+  ansible.builtin.copy:
+    dest: /etc/pacman.d/mirrorlist
+    content: |
+      # Managed by arch-images build pipeline.
+      # geo.mirror.pkgbuild.com is Arch's official CDN (CloudFlare).
+      Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Force-refresh package database against new mirror
+  community.general.pacman:
+    update_cache: true
+    force: true
